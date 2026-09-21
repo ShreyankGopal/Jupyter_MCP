@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from Jupyter_MCP.Notebook.manager import NotebookManager
 from Jupyter_MCP.Notebook.diff import generate_diff
-from Jupyter_MCP.Notebook.models import Cell
+from Jupyter_MCP.Notebook.models import Cell, CellEdit
 
 # Create MCP server
 mcp = FastMCP("jupyter-mcp")
@@ -125,6 +125,43 @@ def generate_diff_tool(old_source: str, new_source: str) -> str:
         
     except Exception as e:
         logger.error(f"Error in generate_diff_tool: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def propose_edit(notebook_path: str, cell_id: str, new_source: str) -> dict:
+    """Propose an edit to a cell without modifying the notebook.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        cell_id: The stable cell ID to edit
+        new_source: The proposed new source code
+        
+    Returns:
+        CellEdit object with edit details and status "pending"
+    """
+    logger.info(f"propose_edit called with notebook_path: {notebook_path}, cell_id: {cell_id}")
+    logger.info(f"New source length: {len(new_source)} characters")
+    
+    try:
+        cell_edit = notebook_manager.propose_edit(notebook_path, cell_id, new_source)
+        logger.info(f"Successfully proposed edit {cell_edit.edit_id}")
+        
+        # Convert CellEdit object to dictionary for JSON serialization
+        cell_edit_dict = {
+            "edit_id": cell_edit.edit_id,
+            "notebook_path": cell_edit.notebook_path,
+            "cell_id": cell_edit.cell_id,
+            "old_source": cell_edit.old_source,
+            "new_source": cell_edit.new_source,
+            "diff": cell_edit.diff,
+            "status": cell_edit.status
+        }
+        
+        return cell_edit_dict
+        
+    except Exception as e:
+        logger.error(f"Error in propose_edit: {str(e)}")
         raise
 
 

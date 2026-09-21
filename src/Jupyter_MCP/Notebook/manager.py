@@ -106,3 +106,61 @@ class NotebookManager:
         
         # Cell not found
         raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+    
+    def propose_edit(self, notebook_path: str, cell_id: str, new_source: str) -> CellEdit:
+        """Propose an edit to a cell without modifying the notebook.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            cell_id: The stable cell ID to edit
+            new_source: The proposed new source code
+            
+        Returns:
+            A CellEdit object with status "pending"
+            
+        Raises:
+            ValueError: If the cell_id does not exist in the notebook
+            TypeError: If new_source is not a string
+        """
+        # Validate new_source is a string
+        if not isinstance(new_source, str):
+            raise TypeError("new_source must be a string")
+        
+        # Load notebook and ensure cell IDs
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        # Find the cell by its stable ID
+        target_cell = None
+        for cell in notebook.cells:
+            if cell['id'] == cell_id:
+                target_cell = cell
+                break
+        
+        if target_cell is None:
+            raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+        
+        # Get current source
+        old_source = target_cell['source']
+        
+        # Generate diff
+        diff = generate_diff(old_source, new_source)
+        
+        # Create edit ID
+        edit_id = f"edit_{str(uuid.uuid4())[:8]}"
+        
+        # Create CellEdit object
+        cell_edit = CellEdit(
+            edit_id=edit_id,
+            notebook_path=notebook_path,
+            cell_id=cell_id,
+            old_source=old_source,
+            new_source=new_source,
+            diff=diff,
+            status="pending"
+        )
+        
+        # Store in pending edits
+        self.pending_edits[edit_id] = cell_edit
+        
+        return cell_edit

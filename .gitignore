@@ -3,3 +3,4 @@ tests/__pycache__
 src/Jupyter_MCP/Notebook/__pycache__
 .pytest_cache
 sample.ipynb
+src/Jupyter_MCP/__pycache__
