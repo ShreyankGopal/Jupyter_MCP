@@ -1,0 +1,767 @@
+# NotebookManager — Implementation Specification
+
+## 1. Objective
+
+Implement a Python `NotebookManager` responsible exclusively for manipulating the persistent state of Jupyter `.ipynb` notebooks.
+
+The NotebookManager must NOT execute Python code or manage Jupyter kernels. Kernel execution will be implemented separately later.
+
+The NotebookManager should provide a clean abstraction over `nbformat` so that the MCP layer does not directly manipulate notebook JSON.
+
+The design should support an AI coding agent that needs to:
+
+1. inspect notebook cells
+2. identify cells reliably
+3. read cell contents
+4. insert/delete/move cells
+5. replace cell contents
+6. generate human-readable diffs for edits
+7. preserve notebook validity and metadata
+8. save changes safely
+
+---
+
+# 2. Core Design
+
+Use this architecture:
+
+MCP Tools
+|
+v
+NotebookManager
+|
+v
+nbformat
+|
+v
+.ipynb file
+
+Do NOT put MCP-specific logic inside NotebookManager.
+
+The NotebookManager should be usable independently of MCP and testable directly from Python.
+
+Use `nbformat` for reading/writing notebooks rather than manually manipulating notebook JSON.
+
+---
+
+# 3. Cell Identity
+
+Do NOT use the cell's array index as its permanent identity.
+
+Notebook position can change when cells are inserted/deleted/moved.
+
+Every cell should have a stable `cell_id`.
+
+Use the native Jupyter cell ID when available. If a notebook does not contain valid cell IDs, generate stable UUID-based IDs and persist them in the notebook.
+
+Each cell should expose:
+
+* `cell_id`
+* `position`
+* `cell_type`
+* `source`
+* `line_start`
+* `line_end`
+* relevant metadata
+* whether outputs are present
+* execution count, if available
+
+Example:
+
+{
+"cell_id": "cell_a81f",
+"position": 7,
+"cell_type": "code",
+"source": "x = 10\ny = x + 5\nprint(y)",
+"line_start": 42,
+"line_end": 44,
+"execution_count": 3,
+"has_output": true
+}
+
+Line numbers are metadata for agent/UI convenience. They must not be the primary cell identity.
+
+---
+
+# 4. Data Models
+
+Create a `models.py` containing typed models/dataclasses.
+
+At minimum implement:
+
+## Cell
+
+Fields:
+
+* `cell_id: str`
+* `position: int`
+* `cell_type: str`
+* `source: str`
+* `line_start: int`
+* `line_end: int`
+* `execution_count: Optional[int]`
+* `has_output: bool`
+
+Do not unnecessarily expose the entire raw nbformat cell object.
+
+---
+
+## CellEdit
+
+Represent a proposed modification separately from the notebook itself.
+
+Fields:
+
+* `edit_id: str`
+* `notebook_path: str`
+* `cell_id: str`
+* `old_source: str`
+* `new_source: str`
+* `diff: str`
+* `status: str`
+
+Possible statuses:
+
+* `pending`
+* `applied`
+* `rejected`
+
+The purpose is to allow future approval/rejection workflows without coupling the NotebookManager to a UI.
+
+---
+
+# 5. Required NotebookManager API
+
+Implement the following methods.
+
+## list_cells()
+
+Input:
+
+* `notebook_path`
+
+Output:
+
+A list of `Cell` objects.
+
+Example:
+
+[
+{
+"cell_id": "cell_1",
+"position": 0,
+"cell_type": "markdown",
+"source": "# Training",
+"line_start": 1,
+"line_end": 1
+},
+{
+"cell_id": "cell_2",
+"position": 1,
+"cell_type": "code",
+"source": "import torch",
+"line_start": 2,
+"line_end": 2
+}
+]
+
+The returned representation should be concise enough for an LLM context window.
+
+---
+
+## get_cell()
+
+Input:
+
+* `notebook_path`
+* `cell_id`
+
+Output:
+
+A single `Cell` object with complete source and metadata.
+
+If the cell does not exist, return a clear structured error.
+
+---
+
+## insert_cell()
+
+Input:
+
+* `notebook_path`
+* `position`
+* `cell_type`
+* `source`
+
+Output:
+
+* newly created `cell_id`
+* position
+* cell type
+* source
+
+Validate:
+
+* `cell_type` must be supported
+* position must be valid
+* notebook must remain valid after insertion
+
+Initially support:
+
+* `code`
+* `markdown`
+* `raw`
+
+---
+
+## replace_cell()
+
+Input:
+
+* `notebook_path`
+* `cell_id`
+* `new_source`
+
+Output:
+
+A structured edit result containing:
+
+* cell ID
+* old source
+* new source
+* unified diff
+* position
+* status
+
+Do not execute the cell.
+
+Do not modify unrelated cells.
+
+Use Python's `difflib` or an equivalent standard diff implementation.
+
+Example diff:
+
+--- before
++++ after
+@@
+x = 10
+-y = x + 5
++y = x + 10
+print(y)
+
+The diff must be line-oriented and human-readable.
+
+---
+
+## delete_cell()
+
+Input:
+
+* `notebook_path`
+* `cell_id`
+
+Output:
+
+* deleted cell ID
+* original position
+* status
+
+Do not allow accidental deletion of a cell without the caller explicitly requesting deletion.
+
+---
+
+## move_cell()
+
+Input:
+
+* `notebook_path`
+* `cell_id`
+* `new_position`
+
+Output:
+
+* cell ID
+* old position
+* new position
+* status
+
+Cell identity must remain unchanged after moving.
+
+---
+
+# 6. Edit Proposal Model
+
+Initially implement:
+
+`propose_edit()`
+
+rather than coupling the edit process to any specific UI.
+
+Input:
+
+* notebook path
+* cell ID
+* new source
+
+Process:
+
+1. Load notebook.
+2. Find cell using stable cell ID.
+3. Read current source.
+4. Validate new source is a string.
+5. Generate a unified diff.
+6. Create a `CellEdit`.
+7. Store it as `pending`.
+8. Do NOT modify the notebook yet.
+
+Output:
+
+{
+"edit_id": "edit_123",
+"cell_id": "cell_a81f",
+"position": 7,
+"old_source": "...",
+"new_source": "...",
+"diff": "...",
+"status": "pending"
+}
+
+---
+
+# 7. Applying an Edit
+
+Implement:
+
+`apply_edit(edit_id)`
+
+Process:
+
+1. Find pending edit.
+2. Reload the notebook from disk.
+3. Verify the cell still exists.
+4. Verify the cell's current source is still equal to `old_source`.
+5. If the source has changed since the proposal, reject the edit rather than overwriting the newer version.
+6. Apply `new_source`.
+7. Save the notebook.
+8. Mark edit as `applied`.
+
+This prevents stale edits from accidentally overwriting newer changes.
+
+---
+
+# 8. Rejecting an Edit
+
+Implement:
+
+`reject_edit(edit_id)`
+
+This should:
+
+* remove/discard the pending edit
+* leave the notebook unchanged
+* return the edit ID and status
+
+No notebook write should occur.
+
+---
+
+# 9. Diff Generation
+
+Create a separate utility:
+
+`diff.py`
+
+Implement:
+
+`generate_diff(old_source, new_source)`
+
+Use a standard unified diff format.
+
+The diff should be generated before modification.
+
+The NotebookManager should never calculate a diff after overwriting the old source.
+
+---
+
+# 10. Safe Notebook Writes
+
+Do not blindly overwrite the notebook.
+
+Use safe write semantics where practical:
+
+1. Load notebook.
+2. Modify in memory.
+3. Validate notebook.
+4. Write to a temporary file.
+5. Replace the original atomically if possible.
+
+Preserve:
+
+* notebook metadata
+* cell metadata
+* outputs
+* execution counts
+* kernelspec
+* language metadata
+* notebook format/version
+
+Unless an operation explicitly changes them.
+
+---
+
+# 11. Important distinction: Notebook State vs Kernel State
+
+NotebookManager manages ONLY persistent notebook state.
+
+It manages:
+
+* cells
+* source
+* cell ordering
+* cell metadata
+* outputs as stored in the `.ipynb`
+* execution counts as stored in the `.ipynb`
+
+It does NOT manage:
+
+* Python variables currently in memory
+* imports currently loaded in the kernel
+* models currently loaded in GPU/RAM
+* execution
+* stdout/stderr generated by a live kernel
+* kernel lifecycle
+* interrupts
+* kernel restart
+
+Those belong to a separate `KernelManager`.
+
+Architecture:
+
+MCP
+|
++-----------------------+
+|                       |
+v                       v
+NotebookManager      KernelManager
+|                       |
+nbformat             jupyter_client
+|                       |
+v                       v
+.ipynb               Jupyter Kernel
+
+Do not combine these classes.
+
+---
+
+# 12. Outputs
+
+The NotebookManager may READ outputs that are already persisted in the `.ipynb`.
+
+For example, `get_cell()` may report:
+
+* whether outputs exist
+* output count
+* execution count
+
+However, live output retrieval from execution belongs to KernelManager.
+
+Do not implement live execution in NotebookManager.
+
+---
+
+# 13. Dependency Module
+
+Create:
+
+`dependency.py`
+
+Do not attempt to create a perfect dependency graph.
+
+The first implementation should provide a STATIC / APPROXIMATE dependency graph using Python AST analysis.
+
+For each code cell determine:
+
+* variables defined
+* variables read/used
+* imports
+* function definitions
+* class definitions
+
+Example:
+
+Cell 1:
+
+defines = {df}
+uses = {pd}
+
+Cell 2:
+
+defines = {X, y}
+uses = {df}
+
+Therefore:
+
+Cell 1 -> Cell 2
+
+The graph should contain:
+
+* nodes = cells
+* edges = estimated dependency relationships
+
+Also provide:
+
+`get_downstream_cells(cell_id)`
+
+and
+
+`get_upstream_cells(cell_id)`
+
+Clearly mark this graph as static/estimated.
+
+Do not claim that it represents the exact runtime dependency graph.
+
+---
+
+# 14. Runtime Dependency State
+
+Leave room for a future runtime-aware dependency system.
+
+Eventually we may combine:
+
+STATIC ANALYSIS
++
+EXECUTION HISTORY
++
+KERNEL STATE
+
+to determine whether cells are potentially stale.
+
+Do not implement this in the first NotebookManager version.
+
+---
+
+# 15. What the dependency module should eventually contain
+
+Structure:
+
+dependency/
+**init**.py
+analyzer.py
+graph.py
+ast_analyzer.py
+
+`ast_analyzer.py`
+
+Responsible for analyzing Python source.
+
+`graph.py`
+
+Responsible for graph representation and graph operations.
+
+`analyzer.py`
+
+Responsible for running dependency analysis across notebook cells.
+
+The dependency module should not directly modify notebooks.
+
+---
+
+# 16. NotebookManager Project Structure
+
+Use:
+
+jupyter-mcp/
+│
+├── src/
+│   └── jupyter_mcp/
+│       │
+│       ├── server.py
+│       │
+│       ├── notebook/
+│       │   ├── **init**.py
+│       │   ├── manager.py
+│       │   ├── models.py
+│       │   └── diff.py
+│       │
+│       ├── dependency/
+│       │   ├── **init**.py
+│       │   ├── analyzer.py
+│       │   ├── ast_analyzer.py
+│       │   └── graph.py
+│       │
+│       ├── kernel/
+│       │   └── ...
+│       │
+│       └── tools/
+│           └── ...
+│
+├── tests/
+│   ├── notebook/
+│   │   ├── test_manager.py
+│   │   ├── test_editing.py
+│   │   └── test_diff.py
+│   │
+│   └── dependency/
+│       └── test_dependency.py
+│
+├── examples/
+│   └── example.ipynb
+│
+├── pyproject.toml
+├── README.md
+└── LICENSE
+
+Do not implement KernelManager yet except for placeholder structure.
+
+---
+
+# 17. Compatibility
+
+Target:
+
+* Python 3.10+
+* Jupyter Notebook 7+
+* JupyterLab 4+
+* standard `.ipynb` notebooks using nbformat 4
+* notebooks containing code, markdown and raw cells
+
+Use standard Jupyter libraries rather than relying on internal/private Jupyter APIs.
+
+Primary dependencies:
+
+* `nbformat`
+* Python standard library
+* `pydantic` or dataclasses for models if useful
+
+Do not add unnecessary dependencies.
+
+The NotebookManager must work independently of:
+
+* Windsurf
+* Cursor
+* VS Code
+* JupyterLab
+* MCP
+
+MCP should be an integration layer on top.
+
+---
+
+# 18. Testing Requirements
+
+Create tests for:
+
+1. Loading a notebook.
+2. Listing cells.
+3. Getting a cell by ID.
+4. Inserting a cell.
+5. Replacing a cell.
+6. Deleting a cell.
+7. Moving a cell.
+8. Stable cell IDs after insertion.
+9. Stable cell IDs after movement.
+10. Correct unified diff generation.
+11. Proposing an edit without modifying the notebook.
+12. Applying a pending edit.
+13. Rejecting an edit.
+14. Detecting stale edits where the cell changed after the proposal.
+15. Preserving notebook metadata.
+16. Preserving unrelated cells.
+17. Invalid cell IDs.
+18. Invalid positions.
+19. Invalid cell types.
+20. Malformed notebooks.
+
+Tests should operate on temporary notebook files and never modify real user notebooks.
+
+---
+
+# 19. Design Principles
+
+Follow these principles throughout the implementation:
+
+### Cell-native
+
+Think in terms of cells, not raw JSON.
+
+### Stable identity
+
+Cell identity must not depend on notebook position.
+
+### Separation of concerns
+
+NotebookManager = document.
+
+KernelManager = execution/runtime.
+
+DependencyAnalyzer = analysis.
+
+MCP = external interface.
+
+### Explicit mutations
+
+Operations that modify the notebook should be explicit.
+
+### Safe writes
+
+Never silently overwrite newer changes.
+
+### Minimal context
+
+Return concise structured information rather than entire notebook JSON.
+
+### Host independence
+
+Do not build Windsurf-specific assumptions into NotebookManager.
+
+### Standard libraries
+
+Prefer official Jupyter interfaces and Python standard library.
+
+### Testability
+
+Every core operation must be callable and testable without an MCP client.
+
+---
+
+# 20. Initial Scope
+
+DO NOT implement yet:
+
+* kernel execution
+* automatic execution after editing
+* runtime variable inspection
+* automatic stale-cell execution
+* perfect dependency analysis
+* JupyterLab UI
+* Windsurf UI
+* Cursor UI
+* HTTP/FastAPI server
+* remote kernels
+* multi-user support
+
+First make the NotebookManager reliable.
+
+The initial milestone is:
+
+list_cells
+↓
+get_cell
+↓
+propose_edit
+↓
+generate_diff
+↓
+apply_edit / reject_edit
+
+plus:
+
+insert_cell
+delete_cell
+move_cell
+
+Once this works reliably, we will implement KernelManager separately.
+
+
+do not implement dependency .py only implement the notebook manager list. 
+dont implement all , implement tool by tool or function by function. when i say "yes impleemnet the next function the you implement" first start with the first basic one by getting all cells, then progressiely impleemnt the next on command
