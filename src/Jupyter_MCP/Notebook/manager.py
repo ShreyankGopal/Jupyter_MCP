@@ -272,3 +272,139 @@ class NotebookManager:
             "cell_type": cell_type,
             "source": source
         }
+    
+    def delete_cell(self, notebook_path: str, cell_id: str) -> dict:
+        """Delete a cell from the notebook by its stable ID.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            cell_id: The stable cell ID to delete
+            
+        Returns:
+            Dictionary with deleted cell info and status
+            
+        Raises:
+            ValueError: If the cell_id does not exist in the notebook
+        """
+        # Load notebook and ensure cell IDs
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        # Find the cell by its stable ID and get its position
+        target_index = None
+        for index, cell in enumerate(notebook.cells):
+            if cell['id'] == cell_id:
+                target_index = index
+                break
+        
+        if target_index is None:
+            raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+        
+        # Safety check: prevent deleting the only cell
+        if len(notebook.cells) == 1:
+            raise ValueError("Cannot delete the only cell in the notebook")
+        
+        # Remove the cell
+        deleted_cell = notebook.cells.pop(target_index)
+        
+        # Save notebook
+        self._save_notebook(notebook, notebook_path)
+        
+        # Return result
+        return {
+            "cell_id": cell_id,
+            "original_position": target_index,
+            "status": "deleted"
+        }
+    
+    def move_cell(self, notebook_path: str, cell_id: str, new_position: int) -> dict:
+        """Move a cell to a different position in the notebook.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            cell_id: The stable cell ID to move
+            new_position: The new position (0-based index)
+            
+        Returns:
+            Dictionary with move info and status
+            
+        Raises:
+            ValueError: If the cell_id does not exist or new_position is invalid
+        """
+        # Load notebook and ensure cell IDs
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        # Find the cell by its stable ID and get its current position
+        current_position = None
+        target_cell = None
+        for index, cell in enumerate(notebook.cells):
+            if cell['id'] == cell_id:
+                current_position = index
+                target_cell = cell
+                break
+        
+        if target_cell is None:
+            raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+        
+        # Validate new position
+        if new_position < 0 or new_position >= len(notebook.cells):
+            raise ValueError(f"new_position must be between 0 and {len(notebook.cells) - 1}")
+        
+        # If position hasn't changed, return early
+        if current_position == new_position:
+            return {
+                "cell_id": cell_id,
+                "old_position": current_position,
+                "new_position": new_position,
+                "status": "no_change"
+            }
+        
+        # Remove cell from current position
+        notebook.cells.pop(current_position)
+        
+        # Insert at new position
+        notebook.cells.insert(new_position, target_cell)
+        
+        # Save notebook
+        self._save_notebook(notebook, notebook_path)
+        
+        # Return result
+        return {
+            "cell_id": cell_id,
+            "old_position": current_position,
+            "new_position": new_position,
+            "status": "moved"
+        }
+    
+    def reject_edit(self, edit_id: str) -> dict:
+        """Reject a pending edit proposal and remove it from pending edits.
+        
+        Args:
+            edit_id: The edit ID to reject
+            
+        Returns:
+            Dictionary with rejected edit info and status
+            
+        Raises:
+            ValueError: If the edit_id does not exist in pending edits
+        """
+        # Check if edit exists in pending edits
+        if edit_id not in self.pending_edits:
+            raise ValueError(f"Edit with ID '{edit_id}' not found in pending edits")
+        
+        # Get the edit details
+        cell_edit = self.pending_edits[edit_id]
+        
+        # Remove from pending edits
+        del self.pending_edits[edit_id]
+        
+        # Update status
+        cell_edit.status = "rejected"
+        
+        # Return result
+        return {
+            "edit_id": edit_id,
+            "cell_id": cell_edit.cell_id,
+            "status": "rejected"
+        }

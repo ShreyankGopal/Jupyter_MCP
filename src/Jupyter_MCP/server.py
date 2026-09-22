@@ -21,12 +21,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from Jupyter_MCP.Notebook.manager import NotebookManager
 from Jupyter_MCP.Notebook.diff import generate_diff
 from Jupyter_MCP.Notebook.models import Cell, CellEdit
+from Jupyter_MCP.Notebook.DependencyAnalyzer.astParser import MultiCellParser
+from Jupyter_MCP.Notebook.DependencyAnalyzer.dependency import DependencyAnalyzer
 
 # Create MCP server
 mcp = FastMCP("jupyter-mcp")
 
 # Initialize NotebookManager
 notebook_manager = NotebookManager()
+
+# Initialize dependency analyzers
+multi_cell_parser = MultiCellParser()
+dependency_analyzer = DependencyAnalyzer()
 
 
 @mcp.tool()
@@ -209,6 +215,206 @@ def insert_cell(notebook_path: str, position: int, cell_type: str, source: str) 
         return result
     except Exception as e:
         logger.error(f"Error in insert_cell: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def analyze_dependencies(notebook_path: str) -> dict:
+    """Analyze dependencies between cells in a notebook.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        
+    Returns:
+        Dictionary with dependency graph using cell positions
+        Format: {"Cell0": ["Cell1", "Cell2"], "Cell1": ["Cell3"], ...}
+    """
+    logger.info(f"analyze_dependencies called with notebook_path: {notebook_path}")
+    
+    try:
+        # Get cells from notebook
+        cells = notebook_manager.list_cells(notebook_path)
+        
+        # Prepare cell data for MultiCellParser
+        cell_data = [{'cell_id': cell.cell_id, 'source': cell.source} for cell in cells]
+        
+        # Parse cells to get symbols
+        multi_cell_parser.parse_cells(cell_data)
+        all_symbols = multi_cell_parser.get_all_symbols()
+        
+        # Build dependency graph
+        dependency_analyzer.build_dependency_graph(all_symbols)
+        graph = dependency_analyzer.get_dependency_graph()
+        
+        # Convert to position-based format for easier understanding
+        cell_id_to_position = {cell.cell_id: cell.position for cell in cells}
+        position_based_graph = {}
+        
+        for cell_id, dependencies in graph.items():
+            position = cell_id_to_position[cell_id]
+            dep_positions = sorted([cell_id_to_position[dep_id] for dep_id in dependencies])
+            position_based_graph[f"Cell{position}"] = [f"Cell{pos}" for pos in dep_positions]
+        
+        logger.info("Successfully analyzed dependencies")
+        return position_based_graph
+        
+    except Exception as e:
+        logger.error(f"Error in analyze_dependencies: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def get_downstream_cells(notebook_path: str, changed_positions: list[int]) -> list[str]:
+    """Get cells that need re-execution using multi-source BFS.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        changed_positions: List of cell positions that were changed (0-based)
+        
+    Returns:
+        List of cell positions that need re-execution, in execution order
+    """
+    logger.info(f"get_downstream_cells called with notebook_path: {notebook_path}, changed_positions: {changed_positions}")
+    
+    try:
+        # Get cells from notebook
+        cells = notebook_manager.list_cells(notebook_path)
+        
+        # Build position to cell_id mapping
+        position_to_cell_id = {cell.position: cell.cell_id for cell in cells}
+        cell_id_to_position = {cell.cell_id: cell.position for cell in cells}
+        
+        # Parse cells and build dependency graph
+        cell_data = [{'cell_id': cell.cell_id, 'source': cell.source} for cell in cells]
+        multi_cell_parser.parse_cells(cell_data)
+        all_symbols = multi_cell_parser.get_all_symbols()
+        dependency_analyzer.build_dependency_graph(all_symbols)
+        
+        # Convert positions to cell_ids
+        changed_cell_ids = [position_to_cell_id[pos] for pos in changed_positions if pos in position_to_cell_id]
+        
+        # Get downstream cells using BFS
+        downstream_cell_ids = dependency_analyzer.get_downstream_cells(changed_cell_ids)
+        
+        # Convert back to positions and sort
+        downstream_positions = sorted([cell_id_to_position[cell_id] for cell_id in downstream_cell_ids])
+        
+        logger.info(f"Found {len(downstream_positions)} downstream cells")
+        return downstream_positions
+        
+    except Exception as e:
+        logger.error(f"Error in get_downstream_cells: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def get_upstream_cells(notebook_path: str, position: int) -> list[int]:
+    """Get cells that the given cell depends on.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        position: Position of the cell to analyze (0-based)
+        
+    Returns:
+        List of cell positions that this cell depends on
+    """
+    logger.info(f"get_upstream_cells called with notebook_path: {notebook_path}, position: {position}")
+    
+    try:
+        # Get cells from notebook
+        cells = notebook_manager.list_cells(notebook_path)
+        
+        # Build position to cell_id mapping
+        position_to_cell_id = {cell.position: cell.cell_id for cell in cells}
+        cell_id_to_position = {cell.cell_id: cell.position for cell in cells}
+        
+        # Parse cells and build dependency graph
+        cell_data = [{'cell_id': cell.cell_id, 'source': cell.source} for cell in cells]
+        multi_cell_parser.parse_cells(cell_data)
+        all_symbols = multi_cell_parser.get_all_symbols()
+        dependency_analyzer.build_dependency_graph(all_symbols)
+        
+        # Get upstream dependencies
+        if position not in position_to_cell_id:
+            raise ValueError(f"Position {position} not found in notebook")
+        
+        cell_id = position_to_cell_id[position]
+        upstream_cell_ids = dependency_analyzer.get_upstream_cells(cell_id)
+        
+        # Convert to positions and sort
+        upstream_positions = sorted([cell_id_to_position[cell_id] for cell_id in upstream_cell_ids])
+        
+        logger.info(f"Found {len(upstream_positions)} upstream cells")
+        return upstream_positions
+        
+    except Exception as e:
+        logger.error(f"Error in get_upstream_cells: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def delete_cell(notebook_path: str, cell_id: str) -> dict:
+    """Delete a cell from the notebook by its stable ID.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        cell_id: The stable cell ID to delete
+        
+    Returns:
+        Dictionary with deleted cell info and status
+    """
+    logger.info(f"delete_cell called with notebook_path: {notebook_path}, cell_id: {cell_id}")
+    
+    try:
+        result = notebook_manager.delete_cell(notebook_path, cell_id)
+        logger.info(f"Successfully deleted cell {cell_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in delete_cell: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def move_cell(notebook_path: str, cell_id: str, new_position: int) -> dict:
+    """Move a cell to a different position in the notebook.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        cell_id: The stable cell ID to move
+        new_position: The new position (0-based index)
+        
+    Returns:
+        Dictionary with move info and status
+    """
+    logger.info(f"move_cell called with notebook_path: {notebook_path}, cell_id: {cell_id}, new_position: {new_position}")
+    
+    try:
+        result = notebook_manager.move_cell(notebook_path, cell_id, new_position)
+        logger.info(f"Successfully moved cell {cell_id} to position {new_position}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in move_cell: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def reject_edit(edit_id: str) -> dict:
+    """Reject a pending edit proposal and remove it from pending edits.
+    
+    Args:
+        edit_id: The edit ID to reject
+        
+    Returns:
+        Dictionary with rejected edit info and status
+    """
+    logger.info(f"reject_edit called with edit_id: {edit_id}")
+    
+    try:
+        result = notebook_manager.reject_edit(edit_id)
+        logger.info(f"Successfully rejected edit {edit_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in reject_edit: {str(e)}")
         raise
 
 
