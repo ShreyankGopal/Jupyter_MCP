@@ -165,6 +165,53 @@ def propose_edit(notebook_path: str, cell_id: str, new_source: str) -> dict:
         raise
 
 
+@mcp.tool()
+def edit_cell(notebook_path: str, cell_id: str, new_source: str) -> dict:
+    """Directly edit a cell and return the diff.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        cell_id: The stable cell ID to edit
+        new_source: The new source code
+        
+    Returns:
+        Dictionary with edit details and diff
+    """
+    logger.info(f"edit_cell called with notebook_path: {notebook_path}, cell_id: {cell_id}")
+    
+    try:
+        result = notebook_manager.edit_cell(notebook_path, cell_id, new_source)
+        logger.info(f"Successfully edited cell {cell_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in edit_cell: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def insert_cell(notebook_path: str, position: int, cell_type: str, source: str) -> dict:
+    """Insert a new cell at the specified position.
+    
+    Args:
+        notebook_path: Path to the .ipynb file
+        position: Position to insert the cell (0-based index)
+        cell_type: Type of cell ('code', 'markdown', or 'raw')
+        source: The source code/content for the cell
+        
+    Returns:
+        Dictionary with cell_id, position, cell_type, and source
+    """
+    logger.info(f"insert_cell called with notebook_path: {notebook_path}, position: {position}, cell_type: {cell_type}")
+    
+    try:
+        result = notebook_manager.insert_cell(notebook_path, position, cell_type, source)
+        logger.info(f"Successfully inserted cell at position {position}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in insert_cell: {str(e)}")
+        raise
+
+
 if __name__ == "__main__":
     logger.info("Starting Jupyter Notebook Manager MCP Server")
     mcp.run()

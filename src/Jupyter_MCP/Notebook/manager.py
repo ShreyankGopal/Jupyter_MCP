@@ -164,3 +164,111 @@ class NotebookManager:
         self.pending_edits[edit_id] = cell_edit
         
         return cell_edit
+    
+    def edit_cell(self, notebook_path: str, cell_id: str, new_source: str) -> dict:
+        """Directly edit a cell and return the diff.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            cell_id: The stable cell ID to edit
+            new_source: The new source code
+            
+        Returns:
+            Dictionary with edit details and diff
+            
+        Raises:
+            ValueError: If the cell_id does not exist in the notebook
+            TypeError: If new_source is not a string
+        """
+        # Validation
+        if not isinstance(new_source, str):
+            raise TypeError("new_source must be a string")
+        
+        # Load and find cell
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        target_cell = None
+        for cell in notebook.cells:
+            if cell['id'] == cell_id:
+                target_cell = cell
+                break
+        
+        if target_cell is None:
+            raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+        
+        # Generate diff before modification
+        old_source = target_cell['source']
+        diff = generate_diff(old_source, new_source)
+        
+        # Apply change
+        target_cell['source'] = new_source
+        
+        # Save notebook
+        self._save_notebook(notebook, notebook_path)
+        
+        # Return result
+        return {
+            "cell_id": cell_id,
+            "old_source": old_source,
+            "new_source": new_source,
+            "diff": diff,
+            "status": "applied"
+        }
+    
+    def insert_cell(self, notebook_path: str, position: int, cell_type: str, source: str) -> dict:
+        """Insert a new cell at the specified position.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            position: Position to insert the cell (0-based index)
+            cell_type: Type of cell ('code', 'markdown', or 'raw')
+            source: The source code/content for the cell
+            
+        Returns:
+            Dictionary with cell_id, position, cell_type, and source
+            
+        Raises:
+            ValueError: If position is invalid or cell_type is not supported
+            TypeError: If source is not a string
+        """
+        # Validate inputs
+        if not isinstance(source, str):
+            raise TypeError("source must be a string")
+        
+        supported_cell_types = ['code', 'markdown', 'raw']
+        if cell_type not in supported_cell_types:
+            raise ValueError(f"cell_type must be one of {supported_cell_types}")
+        
+        # Load notebook
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        # Validate position
+        if position < 0 or position > len(notebook.cells):
+            raise ValueError(f"position must be between 0 and {len(notebook.cells)}")
+        
+        # Create new cell based on type
+        if cell_type == 'code':
+            new_cell = nbformat.v4.new_code_cell(source=source)
+        elif cell_type == 'markdown':
+            new_cell = nbformat.v4.new_markdown_cell(source=source)
+        elif cell_type == 'raw':
+            new_cell = nbformat.v4.new_raw_cell(source=source)
+        
+        # Ensure cell has ID
+        new_cell['id'] = str(uuid.uuid4())[:8]
+        
+        # Insert at specified position
+        notebook.cells.insert(position, new_cell)
+        
+        # Save notebook
+        self._save_notebook(notebook, notebook_path)
+        
+        # Return result
+        return {
+            "cell_id": new_cell['id'],
+            "position": position,
+            "cell_type": cell_type,
+            "source": source
+        }
