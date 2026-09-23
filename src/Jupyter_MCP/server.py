@@ -23,7 +23,8 @@ from Jupyter_MCP.Notebook.diff import generate_diff
 from Jupyter_MCP.Notebook.models import Cell, CellEdit
 from Jupyter_MCP.Notebook.DependencyAnalyzer.astParser import MultiCellParser
 from Jupyter_MCP.Notebook.DependencyAnalyzer.dependency import DependencyAnalyzer
-
+from Jupyter_MCP.KernelManager.manager import KernelManager
+from Jupyter_MCP.KernelManager.Registry import KernelRegistry 
 # Create MCP server
 mcp = FastMCP("jupyter-mcp")
 
@@ -34,7 +35,9 @@ notebook_manager = NotebookManager()
 multi_cell_parser = MultiCellParser()
 dependency_analyzer = DependencyAnalyzer()
 
-
+# Initialize KernelManager
+kernel_manager = KernelManager()
+kernel_registry = KernelRegistry()
 @mcp.tool()
 def list_cells(notebook_path: str) -> list[dict]:
     """List all cells in a Jupyter notebook.
@@ -417,6 +420,47 @@ def reject_edit(edit_id: str) -> dict:
         logger.error(f"Error in reject_edit: {str(e)}")
         raise
 
+
+#########################################################
+#  MCP Tool for kernel management
+#########################################################
+
+@mcp.tool()
+def start_kernel(Notebook_Path: str, kernel_name: str = "python3") -> dict:
+    """Start a Jupyter kernel.
+    
+    Args:
+        kernel_name: Name of the kernel to start (default: "python3")
+        
+    Returns:
+        Dictionary with kernel info and status
+    """
+    logger.info(f"start_kernel called with kernel_name: {kernel_name}")
+    
+    try:
+        result = kernel_registry.start_kernel(notebook_path=Notebook_Path, kernel_name=kernel_name)
+        logger.info(f"Successfully started kernel {result['kernel_id']}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in start_kernel: {str(e)}")
+        raise
+
+@mcp.tool()
+def stop_kernel(Notebook_Path: str) -> dict:
+    """Stop the currently running Jupyter kernel.
+    
+    Returns:
+        Dictionary with stop info and status
+    """
+    logger.info("stop_kernel called")
+    
+    try:
+        result = kernel_registry.stop_kernel(notebook_path=Notebook_Path)
+        logger.info(f"Successfully stopped kernel {result['kernel_id']}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in stop_kernel: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     logger.info("Starting Jupyter Notebook Manager MCP Server")
