@@ -4,9 +4,11 @@ MCP Server for Jupyter Notebook Management
 """
 
 import logging
+# pyrefly: ignore [missing-import]
 from mcp.server.fastmcp import FastMCP
 from pathlib import Path
 import sys
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(
@@ -461,6 +463,42 @@ def stop_kernel(Notebook_Path: str) -> dict:
     except Exception as e:
         logger.error(f"Error in stop_kernel: {str(e)}")
         raise
+
+@mcp.tool()
+def execute_cell(
+    Notebook_Path: str,
+    position: Optional[int] = None,
+    cell_id: Optional[str] = None,
+    timeout: int = 30
+) -> dict:
+    """Execute a specific cell in the notebook by position (0-based) or cell_id using the running kernel.
+
+    Args:
+        Notebook_Path: Path to the .ipynb file
+        position: Optional 0-based position index of the cell to execute (e.g. 0 for first cell)
+        cell_id: Optional stable cell ID to execute (if position is not given)
+        timeout: Execution timeout in seconds (default: 30)
+
+    Returns:
+        Dictionary with execution status, outputs, position, cell_id, and execution count
+    """
+    logger.info(f"execute_cell called with Notebook_Path: {Notebook_Path}, position: {position}, cell_id: {cell_id}")
+
+    try:
+        result = kernel_registry.execute_cell(
+            notebook_path=Notebook_Path,
+            notebook_manager=notebook_manager,
+            cell_id=cell_id,
+            position=position,
+            timeout=timeout
+        )
+        logger.info(f"Successfully executed cell {result.get('cell_id')} (position {result.get('position')}) with status: {result.get('status')}")
+        return result
+    except Exception as e:
+        logger.error(f"Error in execute_cell: {str(e)}")
+        raise
+
+
 
 if __name__ == "__main__":
     logger.info("Starting Jupyter Notebook Manager MCP Server")

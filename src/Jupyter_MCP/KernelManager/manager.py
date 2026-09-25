@@ -6,17 +6,19 @@ Manages kernel lifecycle, cell execution, and runtime state.
 from jupyter_client import KernelManager as JupyterKernelManager, KernelClient
 from typing import Optional, Dict, Any
 import time
+from .executor import CellExecutor
 
 
 class KernelManager:
     """Manages Jupyter kernel lifecycle and execution."""
     
-    def __init__(self):
+    def __init__(self, default_timeout: int = 30):
         """Initialize the KernelManager."""
-        self.kernel_manager: Optional[KernelManager] = None
+        self.kernel_manager: Optional[JupyterKernelManager] = None
         self.kernel_client: Optional[KernelClient] = None
         self.kernel_id: Optional[str] = None
         self.is_running = False
+        self.executor = CellExecutor(default_timeout=default_timeout)
     
     def start_kernel(self, kernel_name: str = 'python3') -> Dict[str, Any]:
         """
@@ -156,3 +158,22 @@ class KernelManager:
             'is_running': self.is_running,
             'kernel_id': self.kernel_id
         }
+
+    def execute_code(self, code: str, timeout: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Execute code string in the running kernel.
+
+        Args:
+            code: Source code string to execute
+            timeout: Optional execution timeout in seconds
+
+        Returns:
+            Dictionary with execution outputs and status
+
+        Raises:
+            RuntimeError: If kernel is not running
+        """
+        if not self.is_running or not self.kernel_client:
+            raise RuntimeError("Kernel is not running")
+
+        return self.executor.execute(self.kernel_client, code, timeout=timeout)

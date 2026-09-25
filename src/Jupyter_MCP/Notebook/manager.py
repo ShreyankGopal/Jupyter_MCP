@@ -106,6 +106,42 @@ class NotebookManager:
         
         # Cell not found
         raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+
+    def get_cell_by_position(self, notebook_path: str, position: int) -> Cell:
+        """Get a specific cell by its 0-based position index.
+        
+        Args:
+            notebook_path: Path to the .ipynb file
+            position: 0-based index of the cell
+            
+        Returns:
+            A Cell object with complete source and metadata
+            
+        Raises:
+            ValueError: If position is out of range
+        """
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+        
+        if position < 0 or position >= len(notebook.cells):
+            raise ValueError(f"Position {position} is out of range (notebook has {len(notebook.cells)} cells)")
+            
+        line_numbers = self._calculate_line_numbers(notebook)
+        cell = notebook.cells[position]
+        cell_id = cell['id']
+        line_start, line_end = line_numbers[cell_id]
+        
+        return Cell(
+            cell_id=cell_id,
+            position=position,
+            cell_type=cell['cell_type'],
+            source=cell['source'],
+            line_start=line_start,
+            line_end=line_end,
+            execution_count=cell.get('execution_count'),
+            has_output=bool(cell.get('outputs'))
+        )
+
     
     def propose_edit(self, notebook_path: str, cell_id: str, new_source: str) -> CellEdit:
         """Propose an edit to a cell without modifying the notebook.
@@ -407,4 +443,54 @@ class NotebookManager:
             "edit_id": edit_id,
             "cell_id": cell_edit.cell_id,
             "status": "rejected"
+        }
+
+    def update_cell_output(
+        self,
+        notebook_path: str,
+        cell_id: str,
+        outputs: List[dict],
+        execution_count: Optional[int] = None
+    ) -> dict:
+        """Update the outputs and execution count of a specific cell and save to disk.
+
+        Args:
+            notebook_path: Path to the .ipynb file
+            cell_id: The stable cell ID to update
+            outputs: List of output dictionaries in nbformat format
+            execution_count: Optional execution count to set
+
+        Returns:
+            Dictionary with cell_id, execution_count, outputs, and status
+
+        Raises:
+            ValueError: If the cell_id does not exist in the notebook
+        """
+        notebook = self._load_notebook(notebook_path)
+        self._ensure_cell_ids(notebook)
+
+        target_cell = None
+        for cell in notebook.cells:
+            if cell['id'] == cell_id:
+                target_cell = cell
+                break
+
+        if target_cell is None:
+            raise ValueError(f"Cell with ID '{cell_id}' not found in notebook")
+
+        target_cell['outputs'] = [
+            nbformat.from_dict(o) if isinstance(o, dict) and not isinstance(o, nbformat.NotebookNode) else o
+            for o in outputs
+        ]
+        if execution_count is not None:
+            target_cell['execution_count'] = execution_count
+
+        self._save_notebook(notebook, notebook_path)
+
+
+        return {
+            "cell_id": cell_id,
+            "execution_count": execution_count,
+            "outputs": outputs,
+            "status": "updated"
         }
