@@ -110,3 +110,36 @@ def test_registry_execute_cell_and_save_notebook():
             os.remove(temp_notebook_path)
 
 
+def test_registry_execute_cell_auto_start():
+    """Test KernelRegistry auto-starts a kernel if execute_cell is called without explicit start."""
+    notebook_mgr = NotebookManager()
+    registry = KernelRegistry()
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False) as f:
+        temp_notebook_path = f.name
+
+    try:
+        nb = nbformat.v4.new_notebook()
+        cell = nbformat.v4.new_code_cell(source="val = 42\nprint(f'auto-started: {val}')")
+        cell["id"] = "cell_auto"
+        nb.cells.append(cell)
+        nbformat.write(nb, temp_notebook_path)
+
+        # Execute directly without calling registry.start_kernel first
+        res = registry.execute_cell(temp_notebook_path, notebook_manager=notebook_mgr, position=0)
+        assert res["status"] == "ok"
+        assert res["execution_count"] == 1
+        assert any("auto-started: 42" in out.get("text", "") for out in res["outputs"])
+
+        # Check that kernel is now recorded as running in registry
+        kernel = registry.get_kernel(temp_notebook_path)
+        assert kernel is not None
+        assert kernel.is_running is True
+
+    finally:
+        registry.stop_kernel(temp_notebook_path)
+        if os.path.exists(temp_notebook_path):
+            os.remove(temp_notebook_path)
+
+
+

@@ -61,7 +61,9 @@ class KernelRegistry:
         manager = self.kernels.get(path)
 
         if manager is None or not manager.is_running:
-            raise RuntimeError(f"No active kernel running for notebook: {notebook_path}")
+            self.start_kernel(notebook_path=notebook_path)
+            manager = self.kernels.get(path)
+
 
         # Get cell source from notebook manager either by position or cell_id
         if position is not None:

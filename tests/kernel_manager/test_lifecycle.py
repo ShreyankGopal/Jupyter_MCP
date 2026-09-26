@@ -10,6 +10,7 @@ import time
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+# pyrefly: ignore [missing-import]
 from Jupyter_MCP.KernelManager.manager import KernelManager
 
 
