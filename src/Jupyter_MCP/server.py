@@ -429,19 +429,20 @@ def reject_edit(edit_id: str) -> dict:
 
 @mcp.tool()
 def start_kernel(Notebook_Path: str, kernel_name: str = "python3") -> dict:
-    """Start a Jupyter kernel.
+    """Start a Jupyter kernel or connect to existing one.
     
     Args:
+        Notebook_Path: Path to the notebook file
         kernel_name: Name of the kernel to start (default: "python3")
         
     Returns:
-        Dictionary with kernel info and status
+        Dictionary with kernel info and status (including SHA256-based kernel_id)
     """
-    logger.info(f"start_kernel called with kernel_name: {kernel_name}")
+    logger.info(f"start_kernel called with notebook_path: {Notebook_Path}, kernel_name: {kernel_name}")
     
     try:
         result = kernel_registry.start_kernel(notebook_path=Notebook_Path, kernel_name=kernel_name)
-        logger.info(f"Successfully started kernel {result['kernel_id']}")
+        logger.info(f"Successfully started/connected to kernel {result['kernel_id']}")
         return result
     except Exception as e:
         logger.error(f"Error in start_kernel: {str(e)}")
@@ -449,12 +450,15 @@ def start_kernel(Notebook_Path: str, kernel_name: str = "python3") -> dict:
 
 @mcp.tool()
 def stop_kernel(Notebook_Path: str) -> dict:
-    """Stop the currently running Jupyter kernel.
+    """Stop the currently running Jupyter kernel and clean up persistent storage.
     
+    Args:
+        Notebook_Path: Path to the notebook file
+        
     Returns:
         Dictionary with stop info and status
     """
-    logger.info("stop_kernel called")
+    logger.info(f"stop_kernel called with notebook_path: {Notebook_Path}")
     
     try:
         result = kernel_registry.stop_kernel(notebook_path=Notebook_Path)
@@ -462,6 +466,41 @@ def stop_kernel(Notebook_Path: str) -> dict:
         return result
     except Exception as e:
         logger.error(f"Error in stop_kernel: {str(e)}")
+        raise
+
+
+@mcp.tool()
+def check_kernel(Notebook_Path: str) -> dict:
+    """Check if a kernel exists for the given notebook.
+    
+    Args:
+        Notebook_Path: Path to the notebook file
+        
+    Returns:
+        Dictionary with kernel status info
+    """
+    logger.info(f"check_kernel called with Notebook_Path: {Notebook_Path}")
+    
+    try:
+        kernel_info = kernel_registry.check_existing_kernel(Notebook_Path)
+        if kernel_info:
+            logger.info(f"Found existing kernel {kernel_info['kernel_id']}")
+            return {
+                "exists": True,
+                "status": kernel_info.get('status'),
+                "kernel_id": kernel_info.get('kernel_id'),
+                "jupyter_kernel_id": kernel_info.get('jupyter_kernel_id')
+            }
+        else:
+            logger.info("No existing kernel found")
+            return {
+                "exists": False,
+                "status": None,
+                "kernel_id": None,
+                "jupyter_kernel_id": None
+            }
+    except Exception as e:
+        logger.error(f"Error in check_kernel: {str(e)}")
         raise
 
 @mcp.tool()

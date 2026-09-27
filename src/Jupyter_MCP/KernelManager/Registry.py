@@ -1,41 +1,223 @@
 ###
-# Kernel registry to manage a bunch of kernels. this is one per notebook
+# Kernel registry to manage a bunch of kernels with persistent storage.
+# Uses SHA256-based kernel IDs for cross-platform kernel sharing.
 ###
 
 from pathlib import Path
 from typing import Optional, Dict, Any
 from .manager import KernelManager
+from .utils import (
+    calculate_kernel_id,
+    get_kernel_storage_dir,
+    save_kernel_info,
+    load_kernel_info,
+    delete_kernel_info
+)
+
 
 class KernelRegistry:
+    """Manages Jupyter kernels with persistent storage and SHA256-based IDs."""
 
     def __init__(self):
         self.kernels: dict[str, KernelManager] = {}
 
+    def check_existing_kernel(self, notebook_path: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if an existing kernel is available for the given notebook.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            
+        Returns:
+            Dictionary with kernel info if exists and running, None otherwise
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        kernel_info = load_kernel_info(kernel_id)
+        
+        if kernel_info is None:
+            return None
+        
+        # Check if kernel is marked as running
+        if kernel_info.get('status') != 'running':
+            return None
+        
+        # Verify kernel is actually running
+        if kernel_info.get('connection_info'):
+            temp_manager = KernelManager()
+            if temp_manager.verify_kernel_running(kernel_info['connection_info']):
+                return kernel_info
+            else:
+                # Kernel is dead, clean up stale info
+                delete_kernel_info(kernel_id)
+                return None
+        
+        return None
+
+    def connect_to_kernel(self, notebook_path: str) -> KernelManager:
+        """
+        Connect to an existing kernel for the given notebook.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            
+        Returns:
+            KernelManager instance connected to the existing kernel
+            
+        Raises:
+            RuntimeError: If no existing kernel is available
+        """
+        kernel_info = self.check_existing_kernel(notebook_path)
+        
+        if kernel_info is None:
+            raise RuntimeError("No existing kernel available for this notebook")
+        
+        kernel_id = calculate_kernel_id(notebook_path)
+        
+        # Check if already in memory
+        if kernel_id in self.kernels:
+            return self.kernels[kernel_id]
+        
+        # Create new manager and connect to existing kernel
+        manager = KernelManager(custom_kernel_id=kernel_id)
+        result = manager.connect_to_existing_kernel(
+            kernel_info['connection_info'],
+            kernel_info['jupyter_kernel_id']
+        )
+        
+        # Store in memory
+        self.kernels[kernel_id] = manager
+        
+        return manager
+
     def start_kernel(self, notebook_path: str, kernel_name: str = "python3"):
-        path = str(Path(notebook_path).resolve())
-
-        if path in self.kernels:
-            raise RuntimeError("Kernel already exists for notebook")
-
-        manager = KernelManager()
+        """
+        Start a kernel for the given notebook, reusing existing if available.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            kernel_name: Name of the kernel to start (default: python3)
+            
+        Returns:
+            Dictionary with kernel information
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        
+        # Check if already in memory
+        if kernel_id in self.kernels and self.kernels[kernel_id].is_running:
+            return self.kernels[kernel_id].get_kernel_status()
+        
+        # Check for existing kernel in persistent storage
+        existing_kernel = self.check_existing_kernel(notebook_path)
+        if existing_kernel:
+            try:
+                manager = self.connect_to_kernel(notebook_path)
+                return manager.get_kernel_status()
+            except RuntimeError:
+                # Existing kernel is not accessible, clean up and start new
+                delete_kernel_info(kernel_id)
+        
+        # Start new kernel
+        manager = KernelManager(custom_kernel_id=kernel_id)
         result = manager.start_kernel(kernel_name=kernel_name)
-
-        self.kernels[path] = manager
+        
+        # Store in memory
+        self.kernels[kernel_id] = manager
+        
+        # Save to persistent storage
+        kernel_info = {
+            'kernel_id': kernel_id,
+            'jupyter_kernel_id': result.get('jupyter_kernel_id'),
+            'notebook_path': str(Path(notebook_path).resolve()),
+            'kernel_name': kernel_name,
+            'status': 'running',
+            'connection_info': result.get('connection_info', {})
+        }
+        save_kernel_info(kernel_id, kernel_info)
+        
         return result
 
     def get_kernel(self, notebook_path: str):
-        path = str(Path(notebook_path).resolve())
-        return self.kernels.get(path)
+        """
+        Get the kernel for the given notebook from memory or persistent storage.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            
+        Returns:
+            KernelManager instance or None if not found
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        
+        # Check memory first
+        if kernel_id in self.kernels:
+            return self.kernels[kernel_id]
+        
+        # Check persistent storage
+        existing_kernel = self.check_existing_kernel(notebook_path)
+        if existing_kernel:
+            try:
+                return self.connect_to_kernel(notebook_path)
+            except RuntimeError:
+                return None
+        
+        return None
 
     def stop_kernel(self, notebook_path: str):
-        path = str(Path(notebook_path).resolve())
+        """
+        Stop the kernel for the given notebook and clean up persistent storage.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            
+        Returns:
+            Dictionary with stop status
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        
+        # Stop kernel if in memory
+        manager = self.kernels.pop(kernel_id, None)
+        
+        if manager is not None:
+            result = manager.stop_kernel()
+        else:
+            # Try to stop via persistent storage info
+            kernel_info = load_kernel_info(kernel_id)
+            if kernel_info:
+                result = {
+                    'kernel_id': kernel_id,
+                    'status': 'stopped'
+                }
+            else:
+                raise RuntimeError("No kernel for notebook")
+        
+        # Clean up persistent storage
+        delete_kernel_info(kernel_id)
+        
+        return result
 
-        manager = self.kernels.pop(path, None)
+    def save_kernel_state(self, notebook_path: str, kernel_info: Dict[str, Any]) -> None:
+        """
+        Save kernel state to persistent storage.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            kernel_info: Dictionary containing kernel information
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        save_kernel_info(kernel_id, kernel_info)
 
-        if manager is None:
-            raise RuntimeError("No kernel for notebook")
-
-        return manager.stop_kernel()
+    def cleanup_kernel_state(self, notebook_path: str) -> bool:
+        """
+        Remove kernel state from persistent storage.
+        
+        Args:
+            notebook_path: Path to the notebook file
+            
+        Returns:
+            True if state was removed, False if it didn't exist
+        """
+        kernel_id = calculate_kernel_id(notebook_path)
+        return delete_kernel_info(kernel_id)
 
     def execute_cell(
         self,
@@ -57,13 +239,12 @@ class KernelRegistry:
         Returns:
             Dictionary containing cell_id, position, status, execution_count, outputs, and any error details
         """
-        path = str(Path(notebook_path).resolve())
-        manager = self.kernels.get(path)
+        kernel_id = calculate_kernel_id(notebook_path)
+        manager = self.kernels.get(kernel_id)
 
         if manager is None or not manager.is_running:
             self.start_kernel(notebook_path=notebook_path)
-            manager = self.kernels.get(path)
-
+            manager = self.kernels.get(kernel_id)
 
         # Get cell source from notebook manager either by position or cell_id
         if position is not None:

@@ -23,3 +23,4 @@ def generate_diff(old_source: str, new_source: str) -> str:
     )
     
     return "".join(diff)
+
