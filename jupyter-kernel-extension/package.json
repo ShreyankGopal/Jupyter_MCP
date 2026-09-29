@@ -1,0 +1,50 @@
+{
+  "name": "jupyter-kernel-extension",
+  "displayName": "Jupyter Kernel Manager",
+  "description": "VSCode extension for Jupyter kernel management with cross-tool integration",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.0.0"
+  },
+  "categories": [
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onNotebook:jupyter-notebook"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jupyter.startKernel",
+        "title": "Start Jupyter Kernel"
+      },
+      {
+        "command": "jupyter.stopKernel", 
+        "title": "Stop Jupyter Kernel"
+      },
+      {
+        "command": "jupyter.checkKernel",
+        "title": "Check Kernel Status"
+      },
+      {
+        "command": "jupyter.executeCell",
+        "title": "Execute Cell"
+      },
+      {
+        "command": "jupyter.interruptExecution",
+        "title": "Interrupt Execution"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.0.0",
+    "typescript": "^5.0.0"
+  }
+}

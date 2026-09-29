@@ -39,7 +39,8 @@ class CellExecutor:
         exec_timeout = timeout if timeout is not None else self.default_timeout
         
         # Send execute request over shell channel
-        msg_id = kernel_client.execute(code)
+        msg_id = kernel_client.execute(code) # -> this is for shell execution
+        
         # send execute request over shell channel, but collect output sream from IO pub sub. here we subscribe to all topics
         outputs: List[Dict[str, Any]] = []
         execution_count: Optional[int] = None
