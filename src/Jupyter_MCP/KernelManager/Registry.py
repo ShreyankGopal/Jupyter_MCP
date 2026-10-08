@@ -21,12 +21,17 @@ class KernelRegistry:
     def __init__(self):
         self.kernels: dict[str, KernelManager] = {}
 
-    def check_existing_kernel(self, notebook_path: str) -> Optional[Dict[str, Any]]:
+    def check_existing_kernel(
+        self,
+        notebook_path: str,
+        verify_running: bool = True
+    ) -> Optional[Dict[str, Any]]:
         """
         Check if an existing kernel is available for the given notebook.
         
         Args:
             notebook_path: Path to the notebook file
+            verify_running: Probe the kernel and remove stale metadata when the probe fails
             
         Returns:
             Dictionary with kernel info if exists and running, None otherwise
@@ -40,6 +45,10 @@ class KernelRegistry:
         # Check if kernel is marked as running
         if kernel_info.get('status') != 'running':
             return None
+
+        # Status-only callers can inspect persisted metadata without a destructive probe.
+        if not verify_running:
+            return kernel_info
         
         # Verify kernel is actually running
         if kernel_info.get('connection_info'):
