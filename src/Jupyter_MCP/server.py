@@ -482,7 +482,9 @@ def check_kernel(Notebook_Path: str) -> dict:
     logger.info(f"check_kernel called with Notebook_Path: {Notebook_Path}")
     
     try:
-        kernel_info = kernel_registry.check_existing_kernel(Notebook_Path)
+        # This tool reports persisted status only; it must not delete the record
+        # based on a failed liveness probe. Start/reconnect paths still verify it.
+        kernel_info = kernel_registry.check_existing_kernel(Notebook_Path, verify_running=False)
         if kernel_info:
             logger.info(f"Found existing kernel {kernel_info['kernel_id']}")
             return {
